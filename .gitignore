@@ -1,0 +1,6 @@
+__pycache__/
+*.pyc
+.venv/
+m1_quick.csv
+figures/*.png
+figures/*.pdf
