@@ -4,7 +4,7 @@ Companion code for the survey paper:
 
 > **Fast Convolution Algorithms for Deep Neural Networks: A Survey of
 > Methods, Numerical Behavior, and Hardware Mappings**
-> Weiwei Wang, Victor DeBrunner, Linda DeBrunner (under review, 2026)
+> Weiwei Wang(under review, 2026)
 
 This repository contains every measurement script and raw result behind the
 paper's Section VII (cross-cutting comparison), plus the scripts that generate
