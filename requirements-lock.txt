@@ -1,0 +1,18 @@
+# Exact environment used for the measurements reported in the paper.
+# (Recorded from results/env_info.txt; see that file for CUDA/cuDNN/driver.)
+#
+# GPU experiments require the CUDA build of PyTorch. Install torch first from
+# the PyTorch index, then the rest:
+#   pip install torch==2.5.1 --index-url https://download.pytorch.org/whl/cu121
+#   pip install -r requirements-lock.txt
+#
+# python==3.11.7   (CPython)
+torch==2.5.1+cu121
+numpy==1.26.3
+matplotlib==3.8.2
+#
+# Platform of record: Windows 11 (10.0.26200); CUDA 12.1 runtime;
+# bundled cuDNN 9.1.0; driver CUDA 13.2; NVIDIA GeForce GTX 1660 Ti (Turing);
+# Intel Core i7-10700 (8C/16T, AVX2).
+# Absolute timings are platform-specific; the paper's claims concern
+# orderings, regime boundaries, and stage-level decompositions.

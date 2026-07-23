@@ -1,3 +1,5 @@
+# Loose bounds for convenience. For the EXACT versions used in the paper,
+# use requirements-lock.txt instead.
 # GPU experiments need a CUDA build of PyTorch, e.g.:
 #   pip install torch --index-url https://download.pytorch.org/whl/cu121
 torch>=2.2
