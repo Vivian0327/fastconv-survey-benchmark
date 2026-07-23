@@ -9,13 +9,12 @@ import torch.nn.functional as F
 dev = torch.device("cuda")
 torch.backends.cudnn.benchmark = True
 
-# ---------------- (a) which algorithm does cuDNN actually pick? -------------
-# Strategy: re-exec this script per config with the legacy v7 cuDNN API forced
-# (TORCH_CUDNN_V8_API_DISABLED=1) and CUDNN_LOGINFO_DBG=1; the v7 log prints
-# the chosen algo enum, which is human-readable:
-ALGO_FWD = {0: "IMPLICIT_GEMM", 1: "IMPLICIT_PRECOMP_GEMM", 2: "GEMM",
-            3: "DIRECT", 4: "FFT", 5: "FFT_TILING", 6: "WINOGRAD",
-            7: "WINOGRAD_NONFUSED"}
+# ---------------- (a) what numerical notes does cuDNN's selected engine carry? --
+# We read the cuDNN info log and collect the CUDNN_NUMERICAL_NOTE_* flags of the
+# selected engine. IMPORTANT: these notes advertise engine PROPERTIES (uses FFT,
+# uses Winograd, tensor-core, ...), NOT a verified algorithm identifier. Absence
+# of a Winograd/FFT note is *consistent with* a GEMM/direct engine, not proof of
+# one. Recovering exact engine IDs would require the cuDNN v9 backend API.
 
 INTROSPECT = [  # (name, N, C, K, H, r, groups, dtype-str)
     ("3x3-56 fp32",   8,  64,  64, 56,  3, 1,   "fp32"),
@@ -41,7 +40,7 @@ if len(sys.argv) > 2 and sys.argv[1] == "--child":
     run_one_config(sys.argv[2:])
     sys.exit(0)
 
-print("=== (a) cuDNN algorithm introspection (v7 API log) ===")
+print("=== (a) cuDNN engine numerical-note observations (not verified engine IDs) ===")
 for (name, N, C, K, H, r, g, dts) in INTROSPECT:
     env = dict(os.environ, TORCH_CUDNN_V8_API_DISABLED="1",
                CUDNN_LOGINFO_DBG="1", CUDNN_LOGDEST_DBG="stdout")
@@ -54,7 +53,8 @@ for (name, N, C, K, H, r, g, dts) in INTROSPECT:
         notes[mm.group(1)] = notes.get(mm.group(1), 0) + 1
     notes.pop("STRICT_NAN_PROP", None)      # uninformative
     tag = ", ".join(f"{k}:{v}" for k, v in
-                    sorted(notes.items(), key=lambda kv: -kv[1])) or "none (GEMM-family)"
+                    sorted(notes.items(), key=lambda kv: -kv[1])) \
+          or "no Winograd/FFT note (consistent with GEMM/direct, not verified)"
     print(f"[{name:14s}] engine numerical notes: {tag}")
 
 # ---------------- (b) explicit Winograd tile-size error growth --------------

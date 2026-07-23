@@ -1,10 +1,10 @@
-=== (a) cuDNN algorithm introspection (v7 API log) ===
+=== (a) cuDNN engine numerical-note observations (not verified engine IDs) ===
 [3x3-56 fp32   ] engine numerical notes: WINOGRAD:1, WINOGRAD_TILE_4x4:1
 [3x3-56 fp16   ] engine numerical notes: TENSOR_CORE:1
 [7x7-56 fp32   ] engine numerical notes: FFT:1
 [13x13-28 fp32 ] engine numerical notes: FFT:1
 [31x31-28 fp32 ] engine numerical notes: FFT:1
-[dw31x31 fp32  ] engine numerical notes: none (GEMM-family)
+[dw31x31 fp32  ] engine numerical notes: no Winograd/FFT note (consistent with GEMM/direct, not verified)
 
 === (b) Winograd stability tax across shapes/seeds (r=3, valid, vs fp64) ===
     metric: peak-normalized max error (relLinf) = max|y-ref|/max|ref|
