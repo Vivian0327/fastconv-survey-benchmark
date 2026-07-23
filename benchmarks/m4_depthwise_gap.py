@@ -1,18 +1,19 @@
 # -*- coding: utf-8 -*-
-"""M4: depthwise stressor — quantify the amortization gap (survey Sec. 8.1).
+"""M4: depthwise stressor -- illustrates the amortization gap (paper Sec. VIII-A).
 
-Compares cuDNN-best vs ATen direct (cudnn disabled) vs explicit per-channel
-FFT on real depthwise layers, and contrasts the FFT advantage with the dense
-case measured in M1.
+cuDNN-best vs ATen direct (cudnn disabled) vs explicit per-channel FFT on
+depthwise layers. Multi-seed median + IQR; error vs fp64 direct.
 """
-import math, statistics, torch
+import csv, math, statistics
+import torch
 import torch.nn.functional as F
+from bench_common import rel_rms, rel_linf, time_gpu
 
 dev = torch.device("cuda")
 print(f"device: {torch.cuda.get_device_name(0)}, torch {torch.__version__}")
+SEEDS = 3
 
-# (name, N, C, H, r)  depthwise: groups = C, one filter per channel
-LAYERS = [
+LAYERS = [  # (name, N, C, H, r)  depthwise, groups=C
     ("mobilenet-dw3x3-56", 8, 144, 56,  3),
     ("convnext-dw7x7-14",  8, 384, 14,  7),
     ("convnext-dw7x7-28",  8, 192, 28,  7),
@@ -24,54 +25,51 @@ def conv_cudnn(x, w):
     return F.conv2d(x, w, padding="same", groups=x.shape[1])
 
 def conv_aten_direct(x, w):
-    torch.backends.cudnn.enabled = False        # ATen depthwise direct kernel
+    torch.backends.cudnn.enabled = False
     try:
         return F.conv2d(x, w, padding="same", groups=x.shape[1])
     finally:
         torch.backends.cudnn.enabled = True
 
 def conv_fft_dw(x, w):
-    """Per-channel frequency-domain conv: NO cross-channel contraction, so
-    每个通道的变换只被一个滤波器复用一次 — the amortization-free case."""
     N, C, H, W = x.shape
     r = w.shape[-1]
     s = H + r - 1
-    wf = torch.flip(w, (-2, -1)).squeeze(1)     # C x r x r
-    Xf = torch.fft.rfft2(x, s=(s, s))           # N C s s/2+1
-    Wf = torch.fft.rfft2(wf, s=(s, s))          # C s s/2+1
+    wf = torch.flip(w, (-2, -1)).squeeze(1)
+    Xf = torch.fft.rfft2(x, s=(s, s))
+    Wf = torch.fft.rfft2(wf, s=(s, s))
     y = torch.fft.irfft2(Xf * Wf.unsqueeze(0), s=(s, s))
     lo = r - 1 - r // 2
     return y[..., lo:lo + H, lo:lo + W]
 
-PATHS = {"cudnn_best": conv_cudnn, "aten_direct": conv_aten_direct,
-         "fft_dw": conv_fft_dw}
+PATHS = {"cudnn_best": conv_cudnn, "aten_direct": conv_aten_direct, "fft_dw": conv_fft_dw}
 
-def time_gpu(fn, x, w, warmup=10, iters=50):
-    for _ in range(warmup):
-        fn(x, w)
-    torch.cuda.synchronize()
-    ts, (s0, s1) = [], (torch.cuda.Event(True), torch.cuda.Event(True))
-    for _ in range(iters):
-        s0.record(); fn(x, w); s1.record()
-        torch.cuda.synchronize()
-        ts.append(s0.elapsed_time(s1))
-    return statistics.median(ts)
-
-print(f"\n{'layer':22s} {'path':12s} {'ms':>8s} {'vs cudnn':>9s} {'err':>10s}")
+rows = []
+print(f"\n{'layer':22s} {'path':12s} {'ms':>8s} {'IQR':>6s} {'vs cudnn':>9s} {'relRMS':>9s}")
 for (name, N, C, H, r) in LAYERS:
-    torch.manual_seed(0)
-    x = torch.randn(N, C, H, H, device=dev)
-    w = torch.randn(C, 1, r, r, device=dev) / r
-    ref = F.conv2d(x.double(), w.double(), padding="same", groups=C)
-    base = None
-    for pname, fn in PATHS.items():
-        ms = time_gpu(fn, x, w)
-        err = ((fn(x, w).double() - ref).abs().max() / ref.abs().max()).item()
-        if pname == "cudnn_best":
-            base = ms
-        print(f"{name:22s} {pname:12s} {ms:8.3f} {base/ms:8.2f}x {err:10.2e}")
+    agg = {p: {"ms": [], "iqr": [], "rms": [], "linf": []} for p in PATHS}
+    for seed in range(SEEDS):
+        torch.manual_seed(seed)
+        x = torch.randn(N, C, H, H, device=dev)
+        w = torch.randn(C, 1, r, r, device=dev) / r
+        ref = F.conv2d(x.double(), w.double(), padding="same", groups=C)
+        for pname, fn in PATHS.items():
+            ms, iqr = time_gpu(lambda: fn(x, w), warmup=10, iters=50)
+            agg[pname]["ms"].append(ms); agg[pname]["iqr"].append(iqr)
+            agg[pname]["rms"].append(rel_rms(fn(x, w), ref))
+            agg[pname]["linf"].append(rel_linf(fn(x, w), ref))
+    base = statistics.median(agg["cudnn_best"]["ms"])
+    for pname in PATHS:
+        a = agg[pname]
+        ms = statistics.median(a["ms"]); iqr = statistics.median(a["iqr"])
+        rms = statistics.median(a["rms"]); linf = statistics.median(a["linf"])
+        rows.append([name, r, pname, f"{ms:.3f}", f"{iqr:.3f}", f"{rms:.2e}", f"{linf:.2e}"])
+        print(f"{name:22s} {pname:12s} {ms:8.3f} {iqr:6.3f} {base/ms:8.2f}x {rms:9.2e}")
     print()
 
-print("Context from M1 (dense, r=31): explicit FFT was 8.7x faster than "
-      "explicit im2col;\nif the depthwise FFT advantage above is far smaller, "
-      "the amortization gap is measured.")
+with open("m4_results.csv", "w", newline="") as f:
+    w = csv.writer(f)
+    w.writerow(["layer", "r", "path", "median_ms", "iqr_ms",
+                "rel_rms_vs_fp64", "rel_linf_peaknorm_vs_fp64"])
+    w.writerows(rows)
+print("results -> m4_results.csv")

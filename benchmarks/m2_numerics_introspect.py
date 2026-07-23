@@ -94,41 +94,52 @@ def winograd_conv(x, w, mats, m):
     Y = torch.einsum("ij,nkpqjl,ml->nkpqim", At, M, At)  # N K P P m m
     return Y.permute(0, 1, 2, 4, 3, 5).reshape(N, K, P * m, P * m)
 
-print("\n=== (b) Winograd stability tax (r=3, valid conv, vs fp64 direct) ===")
-torch.manual_seed(0)
-N, C, K, H = 8, 64, 64, 50                               # 50 -> divisible tiles
-x64 = torch.randn(N, C, H, H, device=dev, dtype=torch.float64)
-w64 = torch.randn(K, C, 3, 3, device=dev, dtype=torch.float64) / (3 * math.sqrt(C))
-ref = F.conv2d(x64, w64)                                 # valid, fp64
+print("\n=== (b) Winograd stability tax across shapes/seeds (r=3, valid, vs fp64) ===")
+print("    metric: peak-normalized max error (relLinf) = max|y-ref|/max|ref|")
 
-def rel_err(y, m):
+# Sweep several (C, H) shapes and seeds so the F(2,3)->F(4,3) error ratio
+# is reported as a measured range, not a single instance (review item).
+SHAPES = [(64, 50), (128, 50), (32, 62), (256, 38)]   # (C=K, H)
+SEEDS = 3
+
+def rel_linf_ref(y, ref):
     r0 = ref[..., :y.shape[-2], :y.shape[-1]]
-    return ((y.double() - r0).abs().max() / r0.abs().max()).item()
+    return ((y.double() - r0).abs().max() / r0.abs().max().clamp_min(1e-30)).item()
 
-# sanity: fp64 winograd must match to ~1e-12 (construction check)
-for name, mats_fn, m in [("F(2,3)", mats_f23, 2), ("F(4,3)", mats_f43, 4)]:
-    y = winograd_conv(x64, w64, mats_fn(torch.float64), m)
-    print(f"  sanity fp64 {name}: err={rel_err(y, m):.2e}")
+# fp64 construction sanity (once)
+torch.manual_seed(0)
+xs = torch.randn(4, 16, 26, 26, device=dev, dtype=torch.float64)
+ws = torch.randn(16, 16, 3, 3, device=dev, dtype=torch.float64)
+rs = F.conv2d(xs, ws)
+for nm, mf, m in [("F(2,3)", mats_f23, 2), ("F(4,3)", mats_f43, 4)]:
+    print(f"  sanity fp64 {nm}: "
+          f"{rel_linf_ref(winograd_conv(xs, ws, mf(torch.float64), m), rs):.2e}")
 
-print(f"\n  {'path':14s} {'fp32':>10s} {'fp16':>10s}")
-for dt, col in [(torch.float32, 0), (torch.float16, 1)]:
-    pass
-rows = {}
-for name, fn in [
-    ("im2col", lambda xx, ww: conv_ref(xx, ww)),
-    ("Wino F(2,3)", lambda xx, ww: winograd_conv(xx, ww, mats_f23(xx.dtype), 2)),
-    ("Wino F(4,3)", lambda xx, ww: winograd_conv(xx, ww, mats_f43(xx.dtype), 4)),
-]:
-    rows[name] = []
+import statistics as st
+tax32, tax16 = [], []
+agg = {("im2col", torch.float32): [], ("im2col", torch.float16): [],
+       ("F(2,3)", torch.float32): [], ("F(2,3)", torch.float16): [],
+       ("F(4,3)", torch.float32): [], ("F(4,3)", torch.float16): []}
+for (C, H) in SHAPES:
+    for seed in range(SEEDS):
+        torch.manual_seed(seed)
+        x64 = torch.randn(8, C, H, H, device=dev, dtype=torch.float64)
+        w64 = torch.randn(C, C, 3, 3, device=dev, dtype=torch.float64) / (3 * math.sqrt(C))
+        ref = F.conv2d(x64, w64)
+        for dt in (torch.float32, torch.float16):
+            x, w = x64.to(dt), w64.to(dt)
+            e_im = rel_linf_ref(F.conv2d(x, w), ref)
+            e2 = rel_linf_ref(winograd_conv(x, w, mats_f23(dt), 2), ref)
+            e4 = rel_linf_ref(winograd_conv(x, w, mats_f43(dt), 4), ref)
+            agg[("im2col", dt)].append(e_im)
+            agg[("F(2,3)", dt)].append(e2)
+            agg[("F(4,3)", dt)].append(e4)
+            (tax32 if dt == torch.float32 else tax16).append(e4 / e2)
 
-def conv_ref(xx, ww):                                    # plain conv path
-    return F.conv2d(xx, ww)
-
-for dt in (torch.float32, torch.float16):
-    x, w = x64.to(dt), w64.to(dt)
-    rows["im2col"].append(rel_err(F.conv2d(x, w), 0))
-    rows["Wino F(2,3)"].append(rel_err(winograd_conv(x, w, mats_f23(dt), 2), 2))
-    rows["Wino F(4,3)"].append(rel_err(winograd_conv(x, w, mats_f43(dt), 4), 4))
-
-for name, (e32, e16) in rows.items():
-    print(f"  {name:14s} {e32:10.2e} {e16:10.2e}")
+print(f"\n  {'path':10s} {'fp32 (median)':>16s} {'fp16 (median)':>16s}")
+for p in ("im2col", "F(2,3)", "F(4,3)"):
+    m32 = st.median(agg[(p, torch.float32)]); m16 = st.median(agg[(p, torch.float16)])
+    print(f"  {p:10s} {m32:16.2e} {m16:16.2e}")
+print(f"\n  F(2,3)->F(4,3) per-tile-step error ratio:")
+print(f"    fp32: median {st.median(tax32):.1f}x  range [{min(tax32):.1f}, {max(tax32):.1f}]  (n={len(tax32)})")
+print(f"    fp16: median {st.median(tax16):.1f}x  range [{min(tax16):.1f}, {max(tax16):.1f}]  (n={len(tax16)})")

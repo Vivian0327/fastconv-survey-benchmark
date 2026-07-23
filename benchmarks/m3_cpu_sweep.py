@@ -1,16 +1,19 @@
 # -*- coding: utf-8 -*-
-"""M3: CPU regime sweep — oneDNN autotuned vs native (oneDNN off) vs
-explicit im2col vs explicit FFT, same layer set as M1.
+"""M3: CPU regime sweep -- oneDNN vs native (oneDNN off) vs explicit
+im2col vs explicit FFT, same layer set and protocol as M1.
 
-CPU: Intel i7-10700 (8C/16T, AVX2). fp32. Median over warmed-up runs.
+Illustrative measurements on one CPU (Intel i7-10700, AVX2), fp32.
+Median + IQR over 50 warmed-up runs, 3 seeds; error vs fp64 direct.
 """
-import math, statistics, time, torch
+import csv, math, statistics
+import torch
 import torch.nn.functional as F
+from bench_common import rel_rms, rel_linf, time_cpu
 
 torch.manual_seed(0)
 print(f"torch {torch.__version__}, threads={torch.get_num_threads()}")
 
-LAYERS = [  # same set as M1
+LAYERS = [
     ("resnet50-3x3-56",  8,  64,  64, 56,  3),
     ("resnet50-3x3-14",  8, 256, 256, 14,  3),
     ("dense-5x5-56",     8,  64,  64, 56,  5),
@@ -44,36 +47,35 @@ def conv_fft(x, w):
 
 PATHS = {"onednn": conv_onednn, "native": conv_native,
          "im2col": conv_im2col, "fft": conv_fft}
+SEEDS = 3
 
-def time_cpu(fn, x, w, warmup=3, iters=15):
-    for _ in range(warmup):
-        fn(x, w)
-    ts = []
-    for _ in range(iters):
-        t0 = time.perf_counter()
-        fn(x, w)
-        ts.append((time.perf_counter() - t0) * 1e3)
-    return statistics.median(ts)
-
-print(f"\n{'layer':18s} {'path':8s} {'ms':>9s} {'vs onednn':>10s} {'err':>10s}")
-import csv
 rows = []
+print(f"\n{'layer':18s} {'path':8s} {'ms':>9s} {'IQR':>7s} {'vs onednn':>10s} {'relRMS':>9s}")
 for (name, N, C, K, H, r) in LAYERS:
-    x = torch.randn(N, C, H, H)
-    w = torch.randn(K, C, r, r) / (r * math.sqrt(C))
-    ref = F.conv2d(x.double(), w.double(), padding="same")
-    base = None
-    for pname, fn in PATHS.items():
-        ms = time_cpu(fn, x, w)
-        err = ((fn(x, w).double() - ref).abs().max() / ref.abs().max()).item()
-        if pname == "onednn":
-            base = ms
-        rows.append([name, r, pname, f"{ms:.2f}", f"{err:.2e}"])
-        print(f"{name:18s} {pname:8s} {ms:9.2f} {base/ms:9.2f}x {err:10.2e}")
+    agg = {p: {"ms": [], "iqr": [], "rms": [], "linf": []} for p in PATHS}
+    for seed in range(SEEDS):
+        torch.manual_seed(seed)
+        x = torch.randn(N, C, H, H)
+        w = torch.randn(K, C, r, r) / (r * math.sqrt(C))
+        ref = F.conv2d(x.double(), w.double(), padding="same")
+        for pname, fn in PATHS.items():
+            ms, iqr = time_cpu(lambda: fn(x, w), warmup=10, iters=50)
+            agg[pname]["ms"].append(ms); agg[pname]["iqr"].append(iqr)
+            agg[pname]["rms"].append(rel_rms(fn(x, w), ref))
+            agg[pname]["linf"].append(rel_linf(fn(x, w), ref))
+    base = statistics.median(agg["onednn"]["ms"])
+    for pname in PATHS:
+        a = agg[pname]
+        ms = statistics.median(a["ms"]); iqr = statistics.median(a["iqr"])
+        rms = statistics.median(a["rms"]); linf = statistics.median(a["linf"])
+        rows.append([name, r, pname, f"{ms:.2f}", f"{iqr:.2f}",
+                     f"{rms:.2e}", f"{linf:.2e}"])
+        print(f"{name:18s} {pname:8s} {ms:9.2f} {iqr:7.2f} {base/ms:9.2f}x {rms:9.2e}")
     print()
 
 with open("m3_results.csv", "w", newline="") as f:
-    wcsv = csv.writer(f)
-    wcsv.writerow(["layer", "r", "path", "median_ms", "max_rel_err_vs_fp64"])
-    wcsv.writerows(rows)
+    w = csv.writer(f)
+    w.writerow(["layer", "r", "path", "median_ms", "iqr_ms",
+                "rel_rms_vs_fp64", "rel_linf_peaknorm_vs_fp64"])
+    w.writerows(rows)
 print("results -> m3_results.csv")

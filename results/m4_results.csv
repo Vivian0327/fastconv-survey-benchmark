@@ -1,0 +1,13 @@
+layer,r,path,median_ms,iqr_ms,rel_rms_vs_fp64,rel_linf_peaknorm_vs_fp64
+mobilenet-dw3x3-56,3,cudnn_best,0.354,0.012,5.66e-08,1.43e-07
+mobilenet-dw3x3-56,3,aten_direct,0.345,0.002,5.66e-08,1.43e-07
+mobilenet-dw3x3-56,3,fft_dw,1.989,0.038,2.13e-07,2.35e-07
+convnext-dw7x7-14,7,cudnn_best,0.179,0.002,1.15e-07,2.82e-07
+convnext-dw7x7-14,7,aten_direct,0.180,0.005,1.15e-07,2.82e-07
+convnext-dw7x7-14,7,fft_dw,0.489,0.032,2.08e-07,2.45e-07
+convnext-dw7x7-28,7,cudnn_best,0.316,0.008,1.21e-07,2.79e-07
+convnext-dw7x7-28,7,aten_direct,0.315,0.016,1.21e-07,2.79e-07
+convnext-dw7x7-28,7,fft_dw,0.939,0.035,1.79e-07,1.79e-07
+replknet-dw31x31-28,31,cudnn_best,1.927,0.032,4.13e-07,1.04e-06
+replknet-dw31x31-28,31,aten_direct,1.916,0.021,4.13e-07,1.04e-06
+replknet-dw31x31-28,31,fft_dw,1.660,0.024,1.98e-07,2.14e-07

@@ -1,0 +1,21 @@
+=== (a) cuDNN algorithm introspection (v7 API log) ===
+[3x3-56 fp32   ] engine numerical notes: WINOGRAD:1, WINOGRAD_TILE_4x4:1
+[3x3-56 fp16   ] engine numerical notes: TENSOR_CORE:1
+[7x7-56 fp32   ] engine numerical notes: FFT:1
+[13x13-28 fp32 ] engine numerical notes: FFT:1
+[31x31-28 fp32 ] engine numerical notes: FFT:1
+[dw31x31 fp32  ] engine numerical notes: none (GEMM-family)
+
+=== (b) Winograd stability tax across shapes/seeds (r=3, valid, vs fp64) ===
+    metric: peak-normalized max error (relLinf) = max|y-ref|/max|ref|
+  sanity fp64 F(2,3): 9.22e-16
+  sanity fp64 F(4,3): 6.39e-15
+
+  path          fp32 (median)    fp16 (median)
+  im2col             4.35e-07         4.77e-04
+  F(2,3)             4.51e-07         9.25e-04
+  F(4,3)             8.76e-06         1.27e-02
+
+  F(2,3)->F(4,3) per-tile-step error ratio:
+    fp32: median 19.7x  range [17.3, 27.3]  (n=12)
+    fp16: median 13.3x  range [10.4, 17.1]  (n=12)
