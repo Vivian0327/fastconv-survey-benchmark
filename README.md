@@ -20,6 +20,7 @@ stock PyTorch — no custom CUDA kernels required.
 | `benchmarks/m2_numerics_introspect.py` | (a) cuDNN engine introspection via `CUDNN_LOGINFO_DBG` numerical notes; (b) Winograd tile-size error growth across 12 shape/seed configs | Vendor selections align with the regime structure; the "numerical-stability tax" (fp32 median 19.7×/tile step, range 17–27×; ~1.3% error for fp16 F(4,3)) |
 | `benchmarks/m3_cpu_sweep.py` | CPU sweep: oneDNN vs native vs explicit im2col vs explicit FFT | Same regime structure on CPU; oneDNN's missing FFT engine (explicit FFT beats it 1.84× at r=31) |
 | `benchmarks/m4_depthwise_gap.py` | Depthwise stressor: MobileNet/ConvNeXt/RepLKNet layers | The depthwise amortization gap (explicit-FFT advantage over the spatial baseline falls from 8.5× dense to 1.16× depthwise at r=31) |
+| `benchmarks/m5_matched_factorial.py` | Matched factorial: fixed N,C,H,r; vary **only** groups (dense→depthwise); FFT stage breakdown; cold vs cached-filter timing | Isolates transform amortization: input+inverse transforms are constant while multiply scales with channels/group → transform overhead rises 9%→84%; filter-caching saves 33% (dense) vs 5% (depthwise) |
 
 All timing scripts share `benchmarks/bench_common.py` (median + IQR over
 50 warmed-up runs × 3 seeds; two honest error metrics — relative RMS and
